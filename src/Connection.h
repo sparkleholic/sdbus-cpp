@@ -229,6 +229,9 @@ namespace sdbus::internal {
             bool clear();
 
             int fd{-1};
+#ifdef __APPLE__
+            int writeFd{-1};
+#endif
         };
 
         struct MatchInfo

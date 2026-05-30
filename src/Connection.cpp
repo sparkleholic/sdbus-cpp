@@ -44,10 +44,14 @@
 #include <chrono>
 #include <cstdint>
 #include <ctime>
+#ifdef __APPLE__
+#include <fcntl.h>
+#else
+#include <sys/eventfd.h>
+#endif
 #include <memory>
 #include <poll.h>
 #include <string>
-#include <sys/eventfd.h>
 #include SDBUS_HEADER
 #ifndef SDBUS_basu // sd_event integration is not supported in basu-based sdbus-c++
 #include <systemd/sd-event.h>
@@ -926,21 +930,50 @@ int Connection::sdbus_match_install_callback(sd_bus_message *sdbusMessage, void 
 }
 
 Connection::EventFd::EventFd()
+#ifdef __APPLE__
+{
+    int pipeFds[2]{-1, -1};
+    const auto r = pipe(pipeFds);
+    SDBUS_THROW_ERROR_IF(r < 0, "Failed to create event object", -errno);
+
+    fd = pipeFds[0];
+    writeFd = pipeFds[1];
+
+    const auto readFlags = fcntl(fd, F_GETFL, 0);
+    const auto writeFlags = fcntl(writeFd, F_GETFL, 0);
+    SDBUS_THROW_ERROR_IF(readFlags < 0 || writeFlags < 0, "Failed to get event object flags", -errno);
+    SDBUS_THROW_ERROR_IF(fcntl(fd, F_SETFL, readFlags | O_NONBLOCK) < 0, "Failed to set event object flags", -errno);
+    SDBUS_THROW_ERROR_IF(fcntl(writeFd, F_SETFL, writeFlags | O_NONBLOCK) < 0, "Failed to set event object flags", -errno);
+    SDBUS_THROW_ERROR_IF(fcntl(fd, F_SETFD, FD_CLOEXEC) < 0, "Failed to set event object flags", -errno);
+    SDBUS_THROW_ERROR_IF(fcntl(writeFd, F_SETFD, FD_CLOEXEC) < 0, "Failed to set event object flags", -errno);
+}
+#else
     : fd(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK))
 {
     SDBUS_THROW_ERROR_IF(fd < 0, "Failed to create event object", -errno);
 }
+#endif
 
 Connection::EventFd::~EventFd()
 {
     assert(fd >= 0);
     close(fd);
+#ifdef __APPLE__
+    assert(writeFd >= 0);
+    close(writeFd);
+#endif
 }
 
 void Connection::EventFd::notify() // NOLINT(readability-make-member-function-const)
 {
     assert(fd >= 0);
+#ifdef __APPLE__
+    assert(writeFd >= 0);
+    const uint8_t value{1};
+    auto r = write(writeFd, &value, sizeof(value));
+#else
     auto r = eventfd_write(fd, 1);
+#endif
     SDBUS_THROW_ERROR_IF(r < 0, "Failed to notify event descriptor", -errno);
 }
 
@@ -948,9 +981,17 @@ bool Connection::EventFd::clear() // NOLINT(readability-make-member-function-con
 {
     assert(fd >= 0);
 
+#ifdef __APPLE__
+    uint8_t value{};
+    bool cleared{false};
+    while (read(fd, &value, sizeof(value)) > 0)
+        cleared = true;
+    return cleared || errno == EAGAIN || errno == EWOULDBLOCK;
+#else
     uint64_t value{};
     auto r = eventfd_read(fd, &value);
     return r >= 0;
+#endif
 }
 
 } // namespace sdbus::internal
