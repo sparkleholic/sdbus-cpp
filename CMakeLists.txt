@@ -14,6 +14,7 @@ include(GNUInstallDirs) # Installation directories for `install` command and pkg
 
 option(SDBUSCPP_BUILD_LIBSYSTEMD "Fetch & build libsystemd static library and make it part of libsdbus-c++, instead of searching for it in the system" OFF)
 option(SDBUSCPP_ENABLE_MACOS_STUB "Build on macOS with a compile-only sd-bus stub backend" ON)
+option(SDBUSCPP_ENABLE_MACOS_LIBDBUS "Build on macOS with a real libdbus-1 sd-bus backend" OFF)
 if(NOT SDBUSCPP_BUILD_LIBSYSTEMD)
     set(SDBUSCPP_SDBUS_LIB "default" CACHE STRING "sd-bus implementation library to search for and use (default, systemd, elogind, or basu)")
     set_property(CACHE SDBUSCPP_SDBUS_LIB PROPERTY STRINGS default systemd elogind basu)
@@ -83,7 +84,16 @@ if(SDBUSCPP_BUILD_LIBSYSTEMD)
     set(SDBUS_LIB "libsystemd")
 else()
     # Search for sd-bus implementations in the system as per user's configuration
-    if(APPLE AND SDBUSCPP_ENABLE_MACOS_STUB)
+    if(APPLE AND SDBUSCPP_ENABLE_MACOS_LIBDBUS)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(DBus1 REQUIRED IMPORTED_TARGET dbus-1)
+        add_library(Systemd::Libsystemd ALIAS PkgConfig::DBus1)
+        set(SDBUS_IMPL "basu")
+        set(SDBUS_LIB "libdbus-1 (macOS)")
+        set(Systemd_VERSION "252")
+        set(SDBUSCPP_SDBUS_HEADER "<sdbus-c++/macos/sd-bus-libdbus.h>")
+        message(STATUS "Building with macOS libdbus-1 backend (real D-Bus support)")
+    elseif(APPLE AND SDBUSCPP_ENABLE_MACOS_STUB)
         add_library(SdbusCppMacosStub INTERFACE)
         add_library(Systemd::Libsystemd ALIAS SdbusCppMacosStub)
         set(SDBUS_IMPL "basu")
@@ -166,6 +176,9 @@ set(SDBUSCPP_CPP_SRCS
     ${SDBUSCPP_SOURCE_DIR}/Flags.cpp
     ${SDBUSCPP_SOURCE_DIR}/VTableUtils.c
     ${SDBUSCPP_SOURCE_DIR}/SdBus.cpp)
+if(APPLE AND SDBUSCPP_ENABLE_MACOS_LIBDBUS)
+    list(APPEND SDBUSCPP_CPP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/macos/sd-bus-libdbus.c)
+endif()
 
 set(SDBUSCPP_HDR_SRCS
     ${SDBUSCPP_SOURCE_DIR}/Connection.h
