@@ -837,7 +837,9 @@ const sd_bus_error *sd_bus_message_get_error(sd_bus_message *m)
 
 int sd_bus_send(sd_bus *bus, sd_bus_message *m, uint64_t *cookie)
 {
-    if (!bus || !bus->conn || !m) return -EINVAL;
+    if (!m) return -EINVAL;
+    if (!bus) bus = m->bus;          /* sdbus-c++ passes NULL; fall back to the message's own bus */
+    if (!bus || !bus->conn) return -EINVAL;
     flush_pending_str(m);
     dbus_uint32_t serial = 0;
     if (!dbus_connection_send(bus->conn, m->msg, &serial)) return -ENOMEM;
@@ -893,8 +895,18 @@ int sd_bus_message_append_basic(sd_bus_message *m, char type, const void *p)
     int r = flush_pending_str(m);
     if (r < 0) return r;
     DBusMessageIter *it = &m->wr_stack[m->wr_depth];
-    /* UNIX_FD not supported in basic libdbus portable path */
-    if (!dbus_message_iter_append_basic(it, (int)type, p)) return -ENOMEM;
+    /* UNIX_FD not supported in basic libdbus portable path.
+     *
+     * sd-bus convention: for string types ('s', 'o', 'g'), the caller passes
+     * const char* directly as p (e.g. sd_bus_message_append_basic(m, 's', str)).
+     * libdbus convention: dbus_message_iter_append_basic expects const char** for
+     * string types — it dereferences p to obtain the char pointer. Pass &p so that
+     * *((const char **)&p) == p (the original const char *) is what libdbus reads. */
+    if (type == DBUS_TYPE_STRING || type == DBUS_TYPE_OBJECT_PATH || type == DBUS_TYPE_SIGNATURE) {
+        if (!dbus_message_iter_append_basic(it, (int)type, &p)) return -ENOMEM;
+    } else {
+        if (!dbus_message_iter_append_basic(it, (int)type, p)) return -ENOMEM;
+    }
     return 0;
 }
 
