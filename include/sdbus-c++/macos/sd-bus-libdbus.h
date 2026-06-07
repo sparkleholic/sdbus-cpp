@@ -120,6 +120,11 @@ typedef struct sd_bus_vtable {
 #define SD_BUS_VTABLE_PROPERTY_EMITS_INVALIDATION   (1ULL << 4U)
 #define SD_BUS_VTABLE_UNPRIVILEGED                  (1ULL << 5U)
 
+/* ── request-name flags ───────────────────────────────────────────────────── */
+#define SD_BUS_NAME_ALLOW_REPLACEMENT       (1ULL << 0U)
+#define SD_BUS_NAME_REPLACE_EXISTING        (1ULL << 1U)
+#define SD_BUS_NAME_QUEUE                   (1ULL << 2U)
+
 /* ── creds flags ──────────────────────────────────────────────────────────── */
 #define SD_BUS_CREDS_PID                    (1ULL << 0U)
 #define SD_BUS_CREDS_UID                    (1ULL << 1U)
@@ -166,19 +171,25 @@ static inline void sd_bus_error_free(sd_bus_error *e)
     e->name = NULL; e->message = NULL; e->_need_free = 0;
 }
 
+/* sd-bus convention: returns 0 if no error name is given, otherwise a negative
+ * errno corresponding to the error (generic -EIO here; the error *name* is what
+ * callers actually inspect). */
 static inline int sd_bus_error_set(sd_bus_error *e, const char *name, const char *message)
 {
-    if (!e) return -EINVAL;
+    if (!e) return name ? -EIO : 0;
     sd_bus_error_free(e);
     if (name)    { e->name    = strdup(name);    if (!e->name)    return -ENOMEM; }
     if (message) { e->message = strdup(message); if (!e->message) { free((void*)e->name); e->name=NULL; return -ENOMEM; } }
     e->_need_free = 1;
-    return -ENOTSUP;
+    return name ? -EIO : 0;
 }
 
 static inline int sd_bus_error_set_errno(sd_bus_error *e, int error)
 {
-    return sd_bus_error_set(e, "org.freedesktop.DBus.Error.Failed", strerror(error));
+    if (error == 0) return 0;
+    int positive = error < 0 ? -error : error;
+    sd_bus_error_set(e, "org.freedesktop.DBus.Error.Failed", strerror(positive));
+    return -positive;
 }
 
 static inline int sd_bus_error_is_set(const sd_bus_error *e)
