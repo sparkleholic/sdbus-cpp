@@ -13,8 +13,8 @@ include(GNUInstallDirs) # Installation directories for `install` command and pkg
 # -------------------------------
 
 option(SDBUSCPP_BUILD_LIBSYSTEMD "Fetch & build libsystemd static library and make it part of libsdbus-c++, instead of searching for it in the system" OFF)
-option(SDBUSCPP_ENABLE_MACOS_STUB "Build on macOS with a compile-only sd-bus stub backend" ON)
-option(SDBUSCPP_ENABLE_MACOS_LIBDBUS "Build on macOS with a real libdbus-1 sd-bus backend" OFF)
+option(SDBUSCPP_ENABLE_MACOS_STUB "Build on macOS with a compile-only sd-bus stub backend (non-functional at runtime; for build testing only)" OFF)
+option(SDBUSCPP_ENABLE_MACOS_LIBDBUS "Build on macOS with a real libdbus-1 sd-bus backend" ON)
 if(NOT SDBUSCPP_BUILD_LIBSYSTEMD)
     set(SDBUSCPP_SDBUS_LIB "default" CACHE STRING "sd-bus implementation library to search for and use (default, systemd, elogind, or basu)")
     set_property(CACHE SDBUSCPP_SDBUS_LIB PROPERTY STRINGS default systemd elogind basu)
@@ -50,7 +50,10 @@ message(STATUS "  *         SDBUS-C++ CONFIGURATION         *")
 message(STATUS "  *******************************************")
 message(STATUS "")
 message(STATUS "  SDBUSCPP_BUILD_LIBSYSTEMD: ${SDBUSCPP_BUILD_LIBSYSTEMD}")
-message(STATUS "  SDBUSCPP_ENABLE_MACOS_STUB: ${SDBUSCPP_ENABLE_MACOS_STUB}")
+if(APPLE)
+    message(STATUS "  SDBUSCPP_ENABLE_MACOS_LIBDBUS: ${SDBUSCPP_ENABLE_MACOS_LIBDBUS}")
+    message(STATUS "  SDBUSCPP_ENABLE_MACOS_STUB: ${SDBUSCPP_ENABLE_MACOS_STUB}")
+endif()
 if(SDBUSCPP_BUILD_LIBSYSTEMD)
     message(STATUS "    SDBUSCPP_LIBSYSTEMD_VERSION: ${SDBUSCPP_LIBSYSTEMD_VERSION}")
     message(STATUS "    SDBUSCPP_LIBSYSTEMD_EXTRA_CONFIG_OPTS: ${SDBUSCPP_LIBSYSTEMD_EXTRA_CONFIG_OPTS}")
@@ -90,6 +93,7 @@ else()
         add_library(Systemd::Libsystemd ALIAS PkgConfig::DBus1)
         set(SDBUS_IMPL "basu")
         set(SDBUS_LIB "libdbus-1 (macOS)")
+        set(SDBUS_PC_MODULE "dbus-1") # valid pkg-config module name for the generated sdbus-c++.pc
         set(Systemd_VERSION "252")
         set(SDBUSCPP_SDBUS_HEADER "<sdbus-c++/macos/sd-bus-libdbus.h>")
         message(STATUS "Building with macOS libdbus-1 backend (real D-Bus support)")
@@ -98,6 +102,7 @@ else()
         add_library(Systemd::Libsystemd ALIAS SdbusCppMacosStub)
         set(SDBUS_IMPL "basu")
         set(SDBUS_LIB "macOS sd-bus stub")
+        set(SDBUS_PC_MODULE "") # the stub depends on nothing
         set(Systemd_VERSION "252")
         set(SDBUSCPP_SDBUS_HEADER "<sdbus-c++/macos/sd-bus-stub.h>")
         message(WARNING "Building with a macOS compile-only sd-bus stub. Runtime D-Bus operations will return ENOTSUP.")
@@ -312,7 +317,13 @@ if(BUILD_SHARED_LIBS AND (SDBUSCPP_BUILD_LIBSYSTEMD OR Systemd_LINK_LIBRARIES MA
 else()
     set(PKGCONFIG_REQS "")
 endif()
-set(PKGCONFIG_DEPS ${SDBUS_LIB})
+# SDBUS_PC_MODULE overrides SDBUS_LIB when the latter is a human-readable string
+# rather than a valid pkg-config module name (the macOS backends).
+if(DEFINED SDBUS_PC_MODULE)
+    set(PKGCONFIG_DEPS ${SDBUS_PC_MODULE})
+else()
+    set(PKGCONFIG_DEPS ${SDBUS_LIB})
+endif()
 configure_file(pkgconfig/sdbus-c++.pc.in pkgconfig/sdbus-c++.pc @ONLY)
 
 #----------------------------------
